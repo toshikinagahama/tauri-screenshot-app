@@ -3,6 +3,8 @@ import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { listen } from "@tauri-apps/api/event";
+import { writeImage } from "@tauri-apps/plugin-clipboard-manager";
+import { Image as TauriImage } from "@tauri-apps/api/image";
 import ReactCrop, { Crop, PixelCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import "./App.css";
@@ -337,6 +339,24 @@ function App() {
     if (!dataToSave) return;
     
     try {
+      // 1. Copy to Clipboard
+      try {
+          const binaryString = atob(dataToSave);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+          }
+          
+          const img = await TauriImage.fromBytes(bytes);
+          await writeImage(img);
+          console.log("Image copied to clipboard");
+      } catch (clipboardErr) {
+          console.error("Clipboard Error:", clipboardErr);
+          // Don't block file save if clipboard fails
+      }
+
+      // 2. Save to File
       const now = new Date();
       const timestamp = now.toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const filename = `screenshot_${mode}_${timestamp}.png`;
@@ -359,7 +379,9 @@ function App() {
       
       if (path) {
         await invoke("save_image", { path, data: dataToSave });
-        setStatus(`Saved to ${path}`);
+        setStatus(`Saved to ${path} & Clipboard`);
+      } else {
+        setStatus("Copied to Clipboard (File save cancelled)");
       }
     } catch (error) {
       console.error(error);
