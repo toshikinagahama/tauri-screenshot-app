@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save, open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import ReactCrop, { Crop, PixelCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import "./App.css";
@@ -48,6 +49,8 @@ function App() {
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const unlistenRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (mode === "window") {
@@ -176,48 +179,79 @@ function App() {
 
   async function startRecording() {
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: false
-      });
-      
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
-      mediaRecorderRef.current = mediaRecorder;
-      recordedChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          recordedChunksRef.current.push(event.data);
+        if (!canvasRef.current) {
+            setStatus("Error: Canvas not initialized");
+            return;
         }
-      };
 
-      mediaRecorder.onstop = async () => {
-        const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
-        const buffer = await blob.arrayBuffer();
-        const bytes = new Uint8Array(buffer);
-        
-        // Save video
-        saveVideo(Array.from(bytes));
-        
-        // Stop all tracks to release screen
-        stream.getTracks().forEach(track => track.stop());
-        setIsRecording(false);
-        setStatus("Recording finished and saved.");
-      };
+        // 1. Setup Canvas Context
+        const ctx = canvasRef.current.getContext("2d");
+        if (!ctx) return;
 
-      mediaRecorder.start();
-      setIsRecording(true);
-      setStatus("Recording...");
+        // 2. Start Listener
+        const unlisten = await listen<string>("screen-frame", (event) => {
+            const img = new Image();
+            img.onload = () => {
+                if (canvasRef.current) {
+                    canvasRef.current.width = img.width;
+                    canvasRef.current.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                }
+            };
+            img.src = "data:image/jpeg;base64," + event.payload;
+        });
+        unlistenRef.current = unlisten;
+
+        // 3. Start Backend Streaming
+        await invoke("start_streaming", { monitorId: selectedMonitorId });
+
+        // 4. Start MediaRecorder
+        const stream = canvasRef.current.captureStream(30); // 30 FPS
+        const mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
+        mediaRecorderRef.current = mediaRecorder;
+        recordedChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+            recordedChunksRef.current.push(event.data);
+            }
+        };
+
+        mediaRecorder.onstop = async () => {
+            const blob = new Blob(recordedChunksRef.current, { type: "video/webm" });
+            const buffer = await blob.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            
+            // Save video
+            saveVideo(Array.from(bytes));
+            
+            // Clean up
+            if (unlistenRef.current) {
+                unlistenRef.current();
+                unlistenRef.current = null;
+            }
+            setIsRecording(false);
+            setStatus("Recording finished and saved.");
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+        setStatus("Recording...");
+
     } catch (err) {
       console.error("Error starting recording:", err);
       setStatus(`Recording Error: ${err}`);
+      // Cleanup if failed
+      await invoke("stop_streaming");
+      if (unlistenRef.current) unlistenRef.current();
     }
   }
 
-  function stopRecording() {
+  async function stopRecording() {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
     }
+    await invoke("stop_streaming");
   }
 
   async function saveVideo(bytes: number[]) {
@@ -391,7 +425,8 @@ function App() {
           </div>
         )}
 
-        {(mode === "fullscreen" || mode === "area") && monitors.length > 1 && (
+        {/* Show monitor selector for fullscreen, area AND record */}
+        {(mode === "fullscreen" || mode === "area" || mode === "record") && monitors.length > 1 && (
            <div className="monitor-selector">
              <label>Monitor: </label>
              <select
@@ -431,6 +466,9 @@ function App() {
       </div>
 
       <p>{status}</p>
+
+      {/* Hidden canvas for recording stream */}
+      <canvas ref={canvasRef} style={{ display: "none" }} />
 
       {originalImage && mode === "area" && (
         <div className="crop-container">

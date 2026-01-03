@@ -182,7 +182,7 @@ fn start_streaming(
                         let mut buffer = Vec::new();
                         let mut cursor = Cursor::new(&mut buffer);
                         // Use JPEG for faster streaming/smaller size
-                        if let Ok(_) = dynamic_image.write_to(&mut cursor, ImageFormat::Jpeg(70)) {
+                        if let Ok(_) = dynamic_image.write_to(&mut cursor, ImageFormat::Jpeg) {
                             let encoded = general_purpose::STANDARD.encode(&buffer);
                             let _ = window.emit("screen-frame", encoded);
                         }
