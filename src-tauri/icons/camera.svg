@@ -1,0 +1,10 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Shutter Button -->
+  <rect x="336" y="110" width="80" height="36" rx="5" fill="white" stroke="black" stroke-width="16"/>
+  <!-- Body -->
+  <rect x="56" y="146" width="400" height="300" rx="40" fill="white" stroke="black" stroke-width="16"/>
+  <!-- Lens -->
+  <circle cx="256" cy="296" r="100" fill="#808080" stroke="black" stroke-width="16"/>
+  <!-- Text -->
+  <text x="435" y="425" font-family="Arial, sans-serif" font-weight="bold" font-size="40" fill="black" text-anchor="end">hm</text>
+</svg>

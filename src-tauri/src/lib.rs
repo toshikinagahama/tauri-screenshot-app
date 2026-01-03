@@ -161,7 +161,10 @@ fn start_streaming(
     thread::spawn(move || {
         let monitors = match Monitor::all() {
             Ok(m) => m,
-            Err(_) => return,
+            Err(e) => {
+                println!("Error getting monitors: {}", e);
+                return;
+            }
         };
 
         // Find monitor to record
@@ -174,17 +177,35 @@ fn start_streaming(
         };
 
         if let Some(target_monitor) = monitor {
+            println!(
+                "Starting capture on monitor: {}",
+                target_monitor.name().unwrap_or_default()
+            );
             while is_streaming_clone.load(Ordering::SeqCst) {
                 let start = std::time::Instant::now();
                 match target_monitor.capture_image() {
                     Ok(image) => {
                         let dynamic_image = DynamicImage::ImageRgba8(image);
+                        let rgb_image = dynamic_image.to_rgb8();
+                        let width = rgb_image.width();
+                        let height = rgb_image.height();
                         let mut buffer = Vec::new();
                         let mut cursor = Cursor::new(&mut buffer);
-                        // Use JPEG for faster streaming/smaller size
-                        if let Ok(_) = dynamic_image.write_to(&mut cursor, ImageFormat::Jpeg) {
-                            let encoded = general_purpose::STANDARD.encode(&buffer);
-                            let _ = window.emit("screen-frame", encoded);
+
+                        // Use JPEG with high quality (90) and RGB8 to avoid gray screen and artifacts
+                        let mut encoder =
+                            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut cursor, 90);
+                        match encoder.encode(
+                            &rgb_image,
+                            width,
+                            height,
+                            image::ExtendedColorType::Rgb8,
+                        ) {
+                            Ok(_) => {
+                                let encoded = general_purpose::STANDARD.encode(&buffer);
+                                let _ = window.emit("screen-frame", encoded);
+                            }
+                            Err(e) => println!("Encoding error: {}", e),
                         }
                     }
                     Err(e) => println!("Capture error: {}", e),
@@ -196,6 +217,8 @@ fn start_streaming(
                     thread::sleep(Duration::from_millis(33) - elapsed);
                 }
             }
+        } else {
+            println!("Monitor not found!");
         }
     });
 

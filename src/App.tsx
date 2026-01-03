@@ -1,3 +1,4 @@
+
 import { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { save, open } from "@tauri-apps/plugin-dialog";
@@ -5,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import ReactCrop, { Crop, PixelCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import "./App.css";
+import ImageEditor, { ImageEditorRef } from "./ImageEditor";
 
 interface WindowInfo {
   id: number;
@@ -51,6 +53,9 @@ function App() {
   const recordedChunksRef = useRef<Blob[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const unlistenRef = useRef<(() => void) | null>(null);
+
+  // Image Editor Ref
+  const editorRef = useRef<ImageEditorRef>(null);
 
   useEffect(() => {
     if (mode === "window") {
@@ -184,6 +189,18 @@ function App() {
             return;
         }
 
+        // 0. Initialize Canvas Size to Monitor Size (Crucial for Stream Resolution)
+        const currentMonitor = monitors.find(m => m.id === selectedMonitorId);
+        if (currentMonitor) {
+            canvasRef.current.width = currentMonitor.width;
+            canvasRef.current.height = currentMonitor.height;
+            console.log(`Initialized canvas to ${currentMonitor.width}x${currentMonitor.height}`);
+        } else {
+             // Fallback
+             canvasRef.current.width = 1920;
+             canvasRef.current.height = 1080;
+        }
+
         // 1. Setup Canvas Context
         const ctx = canvasRef.current.getContext("2d");
         if (!ctx) return;
@@ -192,9 +209,12 @@ function App() {
         const unlisten = await listen<string>("screen-frame", (event) => {
             const img = new Image();
             img.onload = () => {
-                if (canvasRef.current) {
-                    canvasRef.current.width = img.width;
-                    canvasRef.current.height = img.height;
+                if (canvasRef.current && ctx) {
+                    // Resize if strictly needed (e.g. monitor resolution changed or was wrong)
+                    if (canvasRef.current.width !== img.width || canvasRef.current.height !== img.height) {
+                        canvasRef.current.width = img.width;
+                        canvasRef.current.height = img.height;
+                    }
                     ctx.drawImage(img, 0, 0);
                 }
             };
@@ -207,7 +227,10 @@ function App() {
 
         // 4. Start MediaRecorder
         const stream = canvasRef.current.captureStream(30); // 30 FPS
-        const mediaRecorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
+        const mediaRecorder = new MediaRecorder(stream, { 
+            mimeType: "video/webm;codecs=vp9", 
+            videoBitsPerSecond: 12000000 // 12 Mbps for high quality
+        });
         mediaRecorderRef.current = mediaRecorder;
         recordedChunksRef.current = [];
 
@@ -304,7 +327,13 @@ function App() {
   }
 
   async function saveImage(imgData?: string) {
-    const dataToSave = imgData || image;
+    let dataToSave = imgData || image;
+    
+    // If saving the current view (not a direct capture result) and editor is available, merge annotations
+    if (!imgData && image && editorRef.current) {
+        dataToSave = await editorRef.current.getMergedImage();
+    }
+
     if (!dataToSave) return;
     
     try {
@@ -481,7 +510,7 @@ function App() {
 
       {image && mode !== "record" && (
         <div className="preview">
-          <img src={`data:image/png;base64,${image}`} alt="Screenshot" />
+           <ImageEditor ref={editorRef} imageData={image} />
         </div>
       )}
     </main>
