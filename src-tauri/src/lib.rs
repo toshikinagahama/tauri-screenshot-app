@@ -1,7 +1,9 @@
 use base64::{engine::general_purpose, Engine as _};
 use image::{DynamicImage, ImageFormat};
+use mouse_position::mouse_position::Mouse;
 use std::fs;
 use std::io::Cursor;
+use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 use xcap::{Monitor, Window};
 
 #[derive(serde::Serialize)]
@@ -235,12 +237,80 @@ fn stop_streaming(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+fn get_monitor_at_cursor() -> Option<Monitor> {
+    let position = Mouse::get_mouse_position();
+    let (mouse_x, mouse_y) = match position {
+        Mouse::Position { x, y } => (x, y),
+        _ => return None,
+    };
+
+    let monitors = Monitor::all().ok()?;
+
+    for m in monitors {
+        let x = m.x().unwrap_or(0);
+        let y = m.y().unwrap_or(0);
+        let width = m.width().unwrap_or(0) as i32;
+        let height = m.height().unwrap_or(0) as i32;
+
+        if mouse_x >= x && mouse_x < x + width && mouse_y >= y && mouse_y < y + height {
+            return Some(m);
+        }
+    }
+    None
+}
+
+fn capture_monitor_at_cursor(app_handle: tauri::AppHandle) {
+    if let Some(monitor) = get_monitor_at_cursor() {
+        match monitor.capture_image() {
+            Ok(image) => {
+                let dynamic_image = DynamicImage::ImageRgba8(image);
+                let mut buffer = Vec::new();
+                let mut cursor = Cursor::new(&mut buffer);
+                if let Ok(_) = dynamic_image.write_to(&mut cursor, ImageFormat::Png) {
+                    let encoded = general_purpose::STANDARD.encode(&buffer);
+                    let _ = app_handle.emit("start-area-capture", encoded);
+
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+            Err(e) => println!("Failed to capture monitor: {}", e),
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcuts(vec![
+                    Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F11),
+                    Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::F11),
+                ])
+                .unwrap()
+                .with_handler(|app, shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        let ctrl_shift_f11 =
+                            Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::F11);
+                        let cmd_shift_f11 =
+                            Shortcut::new(Some(Modifiers::SUPER | Modifiers::SHIFT), Code::F11);
+
+                        if shortcut == &ctrl_shift_f11 || shortcut == &cmd_shift_f11 {
+                            let app_handle = app.clone();
+                            thread::spawn(move || {
+                                capture_monitor_at_cursor(app_handle);
+                            });
+                        }
+                    }
+                })
+                .build(),
+        )
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);

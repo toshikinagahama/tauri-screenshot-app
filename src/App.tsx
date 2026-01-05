@@ -76,6 +76,17 @@ function App() {
     if (savedAutoSave) {
       setAutoSave(savedAutoSave === "true");
     }
+
+    const unlistenCapture = listen<string>("start-area-capture", (event) => {
+        setOriginalImage(event.payload);
+        setImage(null);
+        setMode("area");
+        setStatus("Select area to crop (triggered via shortcut)");
+    });
+
+    return () => {
+        unlistenCapture.then(f => f());
+    };
   }, []);
 
   async function fetchWindows() {
@@ -175,7 +186,9 @@ function App() {
         const base64 = canvas.toDataURL("image/png").split(",")[1];
         setImage(base64);
         setOriginalImage(null);
-        setStatus("Cropped!");
+        
+        await copyToClipboard(base64);
+        setStatus("Cropped & Copied to Clipboard!");
         
         if (autoSave) {
             saveImage(base64);
@@ -183,6 +196,25 @@ function App() {
       }
     }
   }
+
+  async function copyToClipboard(dataBase64: string) {
+      try {
+          const binaryString = atob(dataBase64);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+              bytes[i] = binaryString.charCodeAt(i);
+          }
+          
+          const img = await TauriImage.fromBytes(bytes);
+          await writeImage(img);
+          console.log("Image copied to clipboard");
+      } catch (err) {
+          console.error("Clipboard Error:", err);
+          setStatus(`Clipboard Error: ${err}`);
+      }
+  }
+
 
   async function startRecording() {
     try {
@@ -339,22 +371,8 @@ function App() {
     if (!dataToSave) return;
     
     try {
-      // 1. Copy to Clipboard
-      try {
-          const binaryString = atob(dataToSave);
-          const len = binaryString.length;
-          const bytes = new Uint8Array(len);
-          for (let i = 0; i < len; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
-          }
-          
-          const img = await TauriImage.fromBytes(bytes);
-          await writeImage(img);
-          console.log("Image copied to clipboard");
-      } catch (clipboardErr) {
-          console.error("Clipboard Error:", clipboardErr);
-          // Don't block file save if clipboard fails
-      }
+      // 1. Copy to Clipboard (already done in confirmCrop if coming from there, but good to ensure if saving manually)
+      await copyToClipboard(dataToSave);
 
       // 2. Save to File
       const now = new Date();
