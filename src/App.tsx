@@ -410,7 +410,6 @@ function App() {
   return (
     <main className="container">
       <div className="header">
-        <h1>Screenshot App</h1>
         <button 
           className="settings-toggle" 
           onClick={() => setShowSettings(!showSettings)}
